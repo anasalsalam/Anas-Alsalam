@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Geo_Maps",
+  "description": "Scan and analyze archaeological cave candidates, sinkholes, and subsurface anomalies in Syria using ALOS PALSAR topographic models, historical CORONA satellite alignment, and AI analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
