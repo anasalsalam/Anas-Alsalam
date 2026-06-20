@@ -985,28 +985,41 @@ export default function AnalyticsPanel({
             @media print {
               body, html {
                 background: white !important;
-                color: black !important;
+                color: #0f172a !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 -webkit-print-color-adjust: exact !important;
                 print-color-adjust: exact !important;
               }
-              .no-print {
-                display: none !important;
+              /* Hide all components by default using visibility */
+              body * {
+                visibility: hidden;
+              }
+              /* Reveal only our printing modal and its descendants */
+              #print-single-cave-report-backdrop,
+              #print-single-cave-report-backdrop * {
+                visibility: visible;
               }
               #print-single-cave-report-backdrop {
-                background: transparent !important;
+                background: white !important;
                 backdrop-filter: none !important;
                 padding: 0 !important;
-                position: static !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
                 overflow: visible !important;
                 display: block !important;
+                z-index: 99999 !important;
               }
               #print-single-cave-dossier-wrapper {
                 padding: 0 !important;
                 margin: 0 !important;
                 background: white !important;
                 display: block !important;
+                width: 100% !important;
+                max-width: 100% !important;
               }
               #print-single-cave-dossier-sheet {
                 position: static !important;
@@ -1017,17 +1030,21 @@ export default function AnalyticsPanel({
                 padding: 1.5cm !important;
                 margin: 0 !important;
                 background: white !important;
-                color: black !important;
+                color: #0f172a !important;
                 display: block !important;
               }
+              .no-print, .no-print * {
+                display: none !important;
+                visibility: hidden !important;
+              }
               .print-border {
-                border-color: #111111 !important;
+                border-color: #cbd5e1 !important;
               }
               .print-bg-slate {
                 background-color: #f8fafc !important;
               }
               .print-text-dark {
-                color: #0b0f19 !important;
+                color: #0f172a !important;
               }
             }
           `}} />
@@ -1124,13 +1141,31 @@ export default function AnalyticsPanel({
                   </button>
                   <button
                     type="button"
-                    onClick={() => window.print()}
+                    onClick={() => {
+                      try {
+                        window.print();
+                      } catch (e) {
+                        console.error(e);
+                        alert(lang === 'ar'
+                          ? 'تنبيه: الطباعة المباشرة معطلة في معاينة الإطار. يرجى فتح التطبيق في علامة تبويب جديدة مستقلة للطباعة بنجاح.'
+                          : 'Direct printing is restricted inside the sandboxed preview. Please open the application in an external browser tab to print successfully.');
+                      }
+                    }}
                     className="flex-1 py-2 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] uppercase shadow-md flex items-center justify-center gap-1 transition-all cursor-pointer"
                   >
                     <Printer className="w-3.5 h-3.5" />
                     <span>{lang === 'ar' ? 'طباعة التقرير' : 'Print / Save PDF'}</span>
                   </button>
                 </div>
+
+                {typeof window !== 'undefined' && window.self !== window.top && (
+                  <div className="text-[10px] bg-amber-500/15 border border-amber-500/25 text-amber-400 p-2 rounded leading-normal font-sans">
+                    ⚠️ {lang === 'ar' 
+                      ? 'التطبيق يعرض داخل إطار معاينة مدمج. لضمان فتح نافذة الطباعة بشكل صحيح، يرجى فتح التطبيق في نافذة مستقلة جديدة ثم طباعته.'
+                      : 'Running inside sandboxed preview frame. For perfect PDF generation, please open this app in a separate browser tab, then trigger print.'}
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={handleExportTxt}

@@ -266,25 +266,31 @@ export default function App() {
           id="central-display-container"
         >
           <div className="flex-1 flex flex-col">
-            {results ? (
-              <DemGridDisplay
-                results={results}
-                selectedCandidateId={selectedCandidateId}
-                onSelectCandidate={(cand) => {
-                  setSelectedCandidateId(cand.id);
-                  setCustomPoint(null);
-                  setCustomReport(null);
-                }}
-                coronaYear={coronaYear}
-                setCoronaYear={setCoronaYear}
-                coronaOpacity={coronaOpacity}
-                lang={lang}
-                theme={theme}
-                onMapClick={handleMapClick}
-                customPoint={customPoint}
-                onCoordinatesChange={handleCoordinatesChange}
-              />
-            ) : (
+            {results ? (() => {
+              const cacheKey = selectedCandidateId ? `${lat.toFixed(4)}_${lon.toFixed(4)}_${selectedCandidateId}` : '';
+              const activeReport = selectedCandidateId ? reportCache[cacheKey] || null : null;
+              return (
+                <DemGridDisplay
+                  results={results}
+                  selectedCandidateId={selectedCandidateId}
+                  onSelectCandidate={(cand) => {
+                    setSelectedCandidateId(cand.id);
+                    setCustomPoint(null);
+                    setCustomReport(null);
+                  }}
+                  coronaYear={coronaYear}
+                  setCoronaYear={setCoronaYear}
+                  coronaOpacity={coronaOpacity}
+                  lang={lang}
+                  theme={theme}
+                  onMapClick={handleMapClick}
+                  customPoint={customPoint}
+                  onCoordinatesChange={handleCoordinatesChange}
+                  activeReport={activeReport}
+                  customReport={customReport}
+                />
+              );
+            })() : (
               <div 
                 className={`flex-1 flex flex-col items-center justify-center p-10 font-mono gap-4 transition-colors duration-200 ${
                   theme === 'dark' ? 'bg-gray-950 text-gray-500' : 'bg-slate-50 text-slate-500'

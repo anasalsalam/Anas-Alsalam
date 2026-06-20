@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Activity, Eye, Info, Film, Clock, Map, Play, Pause, SkipForward, SkipBack, Locate, Download, Printer, Compass, X, Settings, Sparkles, Split, Maximize2 } from 'lucide-react';
+import { Layers, Activity, Eye, Info, Film, Clock, Map, Play, Pause, SkipForward, SkipBack, Locate, Download, Printer, Compass, X, Settings, Sparkles, Split, Maximize2, MapPin, Crosshair } from 'lucide-react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -15,7 +15,7 @@ import {
   Tooltip,
   Legend,
 } from 'recharts';
-import { ScanResults, CaveCandidate } from '../types';
+import { ScanResults, CaveCandidate, InterpretationReport, CustomPointAnalysis } from '../types';
 import { Language, translations } from '../lib/translations';
 import LeafletMap from './LeafletMap';
 import ExplorationScenarioDisplay from './ExplorationScenarioDisplay';
@@ -33,6 +33,8 @@ interface DemGridDisplayProps {
   onMapClick?: (lat: number, lon: number) => void;
   customPoint?: { lat: number; lon: number } | null;
   onCoordinatesChange?: (lat: number, lon: number) => void;
+  activeReport?: InterpretationReport | null;
+  customReport?: CustomPointAnalysis | null;
 }
 
 export default function DemGridDisplay({
@@ -47,6 +49,8 @@ export default function DemGridDisplay({
   onMapClick,
   customPoint,
   onCoordinatesChange,
+  activeReport,
+  customReport,
 }: DemGridDisplayProps) {
   const [viewMode, setViewMode] = useState<'tpi' | 'dem' | 'corona' | 'satellite' | 'exploration' | 'compare' | 'terrain3d'>('tpi');
   const [palsarCompareMode, setPalsarCompareMode] = useState<'tpi' | 'dem'>('tpi');
@@ -54,6 +58,7 @@ export default function DemGridDisplay({
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [customLatInput, setCustomLatInput] = useState<string>('');
   const [customLonInput, setCustomLonInput] = useState<string>('');
+  const [isDropPinMode, setIsDropPinMode] = useState<boolean>(false);
   const t = translations[lang];
 
   // USGS Real-Time Regional Seismic States & Helper
@@ -109,6 +114,19 @@ export default function DemGridDisplay({
     : candidates.filter((cand) => cand.type === typeFilter);
 
   const selectedCandidate = candidates.find((c) => c.id === selectedCandidateId) || null;
+
+  let customPointCell: { x: number; y: number } | null = null;
+  if (customPoint) {
+    const pixelLatDegree = radius / 7.5;
+    const pixelLonDegree = radius / 7.5;
+    const cx = 7.5 + (customPoint.lon - point.lon) / pixelLonDegree;
+    const cy = 7.5 - (customPoint.lat - point.lat) / pixelLatDegree;
+    const rx = Math.round(cx);
+    const ry = Math.round(cy);
+    if (rx >= 0 && rx < 15 && ry >= 0 && ry < 15) {
+      customPointCell = { x: rx, y: ry };
+    }
+  }
 
   // Clear HUD log automatically after 4 seconds
   useEffect(() => {
@@ -364,6 +382,88 @@ export default function DemGridDisplay({
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportGeoJson = () => {
+    const geoJson = {
+      type: "FeatureCollection",
+      metadata: {
+        project: "Syrian Subsurface Cave-Detection Geo-Explorer",
+        timestamp: new Date().toISOString(),
+        scanning_region: results.region_name,
+        center_coords: [point.lon, point.lat],
+        radius_m: radius * 111320
+      },
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [point.lon, point.lat]
+          },
+          properties: {
+            feature_type: "Scan Center",
+            region_name: results.region_name,
+            radius_m: radius * 111320,
+            description: "Focal center of archaeological sensing operations"
+          }
+        },
+        ...visibleCandidates.map(c => ({
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [c.longitude, c.latitude]
+          },
+          properties: {
+            feature_type: "Cave Candidate",
+            id: c.id,
+            classification: c.type,
+            intensity: c.intensity,
+            confidence: c.confidence,
+            width_m: c.dimensions.width,
+            length_m: c.dimensions.length,
+            depth_approx_m: c.dimensions.depth_approx,
+            geology_notes: c.geology_notes
+          }
+        }))
+      ]
+    };
+
+    const jsonString = JSON.stringify(geoJson, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/geo+json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `GEO-SURVEY-${results.region_name.toUpperCase().replace(/\s+/g, '-')}-CANDIDATES.geojson`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    setHudLogMessage(
+      lang === 'ar'
+        ? `تم تصدير ملف GeoJSON بنجاح!`
+        : `GeoJSON exported successfully with ${visibleCandidates.length} scan candidates!`
+    );
+  };
+
+  const handleTogglePalsarCorona = () => {
+    const isPalsarActive = viewMode === 'tpi' || viewMode === 'dem';
+    if (isPalsarActive) {
+      setViewMode('corona');
+      setHudLogMessage(
+        lang === 'ar'
+          ? 'تم التبديل لأرشيف كورونا التاريخي للقرن الماضي 🎞️'
+          : 'Laid back. Swapped to historical CORONA satellite film layer!'
+      );
+    } else {
+      setViewMode('tpi');
+      setHudLogMessage(
+        lang === 'ar'
+          ? 'تم التبديل لخريطة رادار تضاريس PALSAR الطبوغرافية 🛰️'
+          : 'Scanned. Swapped to L-Band ALOS PALSAR topography heat map!'
+      );
+    }
   };
 
   // Counts of each type in current candidates catalog
@@ -647,6 +747,305 @@ export default function DemGridDisplay({
     URL.revokeObjectURL(url);
   };
 
+  const handleExportDoc = () => {
+    const stampLabel = getStampLabel();
+    const systemDate = new Date().toLocaleDateString(lang === 'ar' ? 'ar-SY' : 'en-US');
+    const regionName = results.region_name;
+    const centerCoords = `${point.lat.toFixed(5)}°N, ${point.lon.toFixed(5)}°E`;
+    const rad = radius;
+    const totalAnoms = totalAnomalies;
+    const meanD = avgDepth.toFixed(1);
+    const leadSurveyor = surveyorName || (lang === 'ar' ? 'د. سارة المصري، رئيسة الجيولوجيين' : 'Dr. Sarah Al-Masri, Chief Geologist');
+    const authority = agencyName || (lang === 'ar' ? 'هيئة استطلاع الفضاء الدولية الموحدة' : 'UNITED SPACE RECONNAISSANCE OFFICE');
+
+    let html = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+    <head>
+      <meta charset="utf-8">
+      <title>Geo-Archaeological Subsurface Radar Survey Dossier</title>
+      <style>
+        body {
+          font-family: 'Arial', sans-serif;
+          color: #1e293b;
+          line-height: 1.5;
+          margin: 1in;
+        }
+        .header-title {
+          font-size: 20pt;
+          font-weight: bold;
+          text-transform: uppercase;
+          border-bottom: 2px double #475569;
+          padding-bottom: 6px;
+          margin-bottom: 12pt;
+          color: #0f172a;
+        }
+        .meta-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 18pt;
+        }
+        .meta-table td {
+          border: 1px solid #cbd5e1;
+          padding: 8px;
+          font-size: 10pt;
+          background-color: #f8fafc;
+        }
+        .section-hdr {
+          font-size: 12pt;
+          font-weight: bold;
+          text-transform: uppercase;
+          color: #0d9488;
+          border-bottom: 1px solid #cbd5e1;
+          padding-bottom: 4px;
+          margin-top: 18pt;
+          margin-bottom: 8pt;
+        }
+        .content-p {
+          font-size: 10pt;
+          text-align: justify;
+          margin-bottom: 12pt;
+        }
+        .stamp-box {
+          border: 2px solid #ef4444;
+          color: #ef4444;
+          font-weight: bold;
+          text-transform: uppercase;
+          padding: 6px;
+          display: inline-block;
+          margin-bottom: 12pt;
+          font-size: 9pt;
+        }
+        .data-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 16pt;
+        }
+        .data-table th {
+          background-color: #f1f5f9;
+          border: 1px solid #cbd5e1;
+          padding: 6px;
+          font-size: 9pt;
+          font-weight: bold;
+          text-transform: uppercase;
+        }
+        .data-table td {
+          border: 1px solid #cbd5e1;
+          padding: 6px;
+          font-size: 9pt;
+        }
+        .card-box {
+          border-left: 4px solid #3b82f6;
+          background-color: #f8fafc;
+          padding: 10px;
+          margin-bottom: 12pt;
+          border-top: 1px solid #cbd5e1;
+          border-right: 1px solid #cbd5e1;
+          border-bottom: 1px solid #cbd5e1;
+        }
+        .card-box-teal {
+          border-left: 4px solid #14b8a6;
+          background-color: #f0fdfa;
+          padding: 10px;
+          margin-bottom: 12pt;
+          border-top: 1px solid #cbd5e1;
+          border-right: 1px solid #cbd5e1;
+          border-bottom: 1px solid #cbd5e1;
+        }
+        .footer-sec {
+          margin-top: 30pt;
+          border-top: 1px double #cbd5e1;
+          padding-top: 10pt;
+          font-size: 9pt;
+        }
+      </style>
+    </head>
+    <body style="direction: ${lang === 'ar' ? 'rtl' : 'ltr'}; text-align: ${lang === 'ar' ? 'right' : 'left'};">
+      <div class="stamp-box">CLASSIFICATION: ${stampLabel}</div>
+      <div style="font-size: 9pt; font-weight: bold; color: #0d9488; text-transform: uppercase;">
+        ${authority}
+      </div>
+      <div class="header-title">
+        ${lang === 'ar' ? 'ملف المسح الأثري والجيوفيزيائي والراداري المتكامل للقطاع' : 'GEO-ARCHAEOLOGICAL SUBSURFACE RADAR SURVEY DOSSIER'}
+      </div>
+      
+      <table class="meta-table" style="direction: ${lang === 'ar' ? 'rtl' : 'ltr'};">
+        <tr>
+          <td><strong>REF:</strong> KH4B-ALOS-PALSAR-SY-${point.lat.toFixed(2)}-${point.lon.toFixed(2)}</td>
+          <td><strong>DATE:</strong> ${systemDate}</td>
+        </tr>
+        <tr>
+          <td><strong>REGION PRESET:</strong> ${regionName}</td>
+          <td><strong>PIVOT COORDINATES:</strong> ${centerCoords}</td>
+        </tr>
+        <tr>
+          <td><strong>MAPPED TARGETS:</strong> ${totalAnoms} / ${candidates.length}</td>
+          <td><strong>SURVEY RADIUS:</strong> ${rad} meters</td>
+        </tr>
+        <tr>
+          <td><strong>STAMPED LEVEL:</strong> ${classificationLevel}</td>
+          <td><strong>ESTIMATED MEAN DEPTH:</strong> ${meanD}m</td>
+        </tr>
+      </table>
+    `;
+
+    // Section I
+    if (includeNarrative) {
+      document.documentElement.lang === 'ar';
+      html += `
+        <div class="section-hdr">I. ${lang === 'ar' ? 'السياق والتحليل الجيولوجي الأساسي للقطاع' : 'GEOLOGICAL CONTEXT & SUBSURFACE LITHOLOGY'}</div>
+        <p class="content-p">${results.geological_context}</p>
+      `;
+    }
+
+    // Section II
+    if (includeCatalog) {
+      html += `
+        <div class="section-hdr">II. ${lang === 'ar' ? 'كتالوج وجدول تصنيفات الشذوذ تحت السطحية' : 'SUBSURFACE RADAR TARGET CATALOG'}</div>
+        <table class="data-table" style="direction: ${lang === 'ar' ? 'rtl' : 'ltr'};">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>${lang === 'ar' ? 'نوع شذوذ الهدف' : 'CLASSIFICATION'}</th>
+              <th>GPS COORDINATES</th>
+              <th>${lang === 'ar' ? 'العمق المقدر (م)' : 'APPROX DEPTH'}</th>
+              <th>${lang === 'ar' ? 'الأبعاد الأفقية' : 'APPROX DIMS'}</th>
+              <th>CONF%</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      visibleCandidates.forEach(c => {
+        html += `
+          <tr>
+            <td style="text-align:center; font-weight:bold;">${c.id}</td>
+            <td>${c.type}</td>
+            <td style="text-align:center;">${c.latitude.toFixed(5)}°N, ${c.longitude.toFixed(5)}°E</td>
+            <td style="text-align:center; font-weight:bold; color:#10b981;">${c.dimensions.depth_approx.toFixed(1)}m</td>
+            <td style="text-align:center;">${c.dimensions.width}m x ${c.dimensions.length}m</td>
+            <td style="text-align:center; font-weight:bold; color:#10b981;">${c.confidence}%</td>
+          </tr>
+        `;
+      });
+      html += `
+          </tbody>
+        </table>
+      `;
+    }
+
+    // Section III: Featured Anomaly & Active AI report
+    if (selectedCandidate) {
+      html += `
+        <div class="section-hdr">III. ${lang === 'ar' ? 'فحص تفصيلي للموقع المكتشف (الهدف الحالي)' : 'FEATURED TARGET DETAILED ASSESSMENT'}</div>
+        <div class="card-box">
+          <p class="content-p">
+            <strong>Target ID:</strong> #${selectedCandidate.id}<br/>
+            <strong>Classification Target:</strong> ${selectedCandidate.type}<br/>
+            <strong>Coordinates:</strong> ${selectedCandidate.latitude.toFixed(5)}°N, ${selectedCandidate.longitude.toFixed(5)}°E<br/>
+            <strong>Approximate Dimensions:</strong> ${selectedCandidate.dimensions.width}m x ${selectedCandidate.dimensions.length}m (Depth Approx: ${selectedCandidate.dimensions.depth_approx.toFixed(1)}m)<br/>
+            <strong>Proximity distance:</strong> ${calculateDistanceToCenter(selectedCandidate).toFixed(1)} meters<br/>
+            <strong>Field geology notes:</strong> <em>"${selectedCandidate.geology_notes}"</em>
+          </p>
+      `;
+
+      if (activeReport) {
+        html += `
+          <div style="margin-top: 12pt; border-top: 1px dashed #cbd5e1; padding-top: 10pt;">
+            <p class="content-p"><strong>AI EXECUTIVE SYNTHESIS SUMMARY:</strong><br/>
+            ${lang === 'ar' ? (activeReport.summary_ar || activeReport.summary) : activeReport.summary}</p>
+            
+            <p class="content-p"><strong>GEOLOGICAL PROBABILITY & KARST MECHANISMS:</strong><br/>
+            ${lang === 'ar' ? (activeReport.geological_probability_ar || activeReport.geological_probability) : activeReport.geological_probability}</p>
+            
+            <p class="content-p"><strong>ARCHAEOLOGICAL RELEVANCE & HISTORIC CONTEXT:</strong><br/>
+            ${lang === 'ar' ? (activeReport.archaeological_relevance_ar || activeReport.archaeological_relevance) : activeReport.archaeological_relevance}</p>
+            
+            <p class="content-p"><strong>HISTORIC SPY-SATELLITE CORONA PHOTOGRAMMETRY:</strong><br/>
+            ${lang === 'ar' ? (activeReport.corona_imagery_analysis_ar || activeReport.corona_imagery_analysis) : activeReport.corona_imagery_analysis}</p>
+            
+            <p class="content-p"><strong>RECOMMENDED FIELD GEOPHYSICAL DIRECTIVES:</strong><br/>
+            ${lang === 'ar' ? (activeReport.field_recommendations_ar || activeReport.field_recommendations) : activeReport.field_recommendations}</p>
+          </div>
+        `;
+      }
+      
+      html += `</div>`;
+    }
+
+    // Section IV: Custom Drop Pin Coordinate Scan Report
+    if (customReport) {
+      html += `
+        <div class="section-hdr">IV. ${lang === 'ar' ? 'التحليل الجيوفيزيائي والأثري الإضافي لإحداثيات الدبوس المسقط' : 'CUSTOM DROP PIN COORDINATE SCAN REPORT'}</div>
+        <div class="card-box-teal">
+          <p class="content-p">
+            <strong>Coordinates Pinpoint:</strong> ${customReport.point.lat.toFixed(6)}°N, ${customReport.point.lon.toFixed(6)}°E<br/>
+            <strong>Artifact Presence:</strong> ${customReport.has_artifacts ? `Yes (Probability: ${customReport.probability}%)` : 'Unlikely'}<br/>
+            <strong>Estimated Class:</strong> ${lang === 'ar' ? (customReport.artifact_type_ar || customReport.artifact_type) : customReport.artifact_type}<br/>
+            <strong>Depth of Buried Structure:</strong> ${customReport.depth_meters.toFixed(1)} meters<br/>
+            <strong>Epoch / Chronology:</strong> ${lang === 'ar' ? (customReport.estimated_age_ar || customReport.estimated_age) : customReport.estimated_age}<br/>
+          </p>
+          <div style="margin-top: 12pt; border-top: 1px dashed #cbd5e1; padding-top: 10pt;">
+            <p class="content-p"><strong>GEOLOGICAL SEDIMENTARY LAYER & STRATIGRAPHY:</strong><br/>
+            ${lang === 'ar' ? (customReport.geological_layer_ar || customReport.geological_layer) : customReport.geological_layer}</p>
+            
+            <p class="content-p"><strong>RADAR SIGNATURE SUBSURFACE STRUCTURES:</strong><br/>
+            ${lang === 'ar' ? (customReport.dossier_report.subsurface_structure_ar || customReport.dossier_report.subsurface_structure) : customReport.dossier_report.subsurface_structure}</p>
+            
+            <p class="content-p"><strong>ARCHAEOLOGICAL HISTORICAL COMMENTARY & ARTIFACT DESCRIPTION:</strong><br/>
+            ${lang === 'ar' ? (customReport.dossier_report.artifact_description_ar || customReport.dossier_report.artifact_description) : customReport.dossier_report.artifact_description}<br/>
+            <span style="font-style:italic; color:#475569;">${lang === 'ar' ? (customReport.dossier_report.historical_commentary_ar || customReport.dossier_report.historical_commentary) : customReport.dossier_report.historical_commentary}</span></p>
+            
+            <p class="content-p"><strong>IMMEDIATE FIELD EXPLORATION ACTIONS:</strong><br/>
+            <strong style="color:#0d9488;">${lang === 'ar' ? (customReport.dossier_report.field_actions_ar || customReport.dossier_report.field_actions) : customReport.dossier_report.field_actions}</strong></p>
+          </div>
+        </div>
+      `;
+    }
+
+    // Section V: Custom observations
+    if (customNotes) {
+      html += `
+        <div class="section-hdr">V. ${lang === 'ar' ? 'ملحق التعليقات والملاحظات الميدانية الإضافية' : 'ADDENDUM: SURVEYOR FIELD COMMENTS'}</div>
+        <p class="content-p" style="font-family: 'Courier New', Courier, monospace; background-color:#f8fafc; padding:10px; border:1px solid #e2e8f0;">
+          ${customNotes}
+        </p>
+      `;
+    }
+
+    if (includeSignature) {
+      html += `
+        <div class="footer-sec">
+          <table style="width:100%; border:none; direction: ${lang === 'ar' ? 'rtl' : 'ltr'};">
+            <tr>
+              <td style="border:none; width:50%; text-align:${lang === 'ar' ? 'right' : 'left'};">
+                <strong>LEAD FIELD SURVEYOR:</strong><br/>
+                ${leadSurveyor}<br/>
+                <span style="color:#64748b; font-size:8pt;">Chief Digital Geologist (Verified Security Clearance-L5)</span>
+              </td>
+              <td style="border:none; width:50%; text-align:${lang === 'ar' ? 'left' : 'right'};">
+                <strong>ISSUING AUTHORITY / AGENCY:</strong><br/>
+                ${authority}<br/>
+                <span style="color:#64748b; font-size:8pt;">International Space-Archaeology Consortium</span>
+              </td>
+            </tr>
+          </table>
+        </div>
+      `;
+    }
+
+    html += `
+    </body>
+    </html>
+    `;
+
+    const blob = new Blob(['\ufeff' + html], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `GEO-RECON-DOSSIER-${point.lat.toFixed(4)}-${point.lon.toFixed(4)}.doc`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const totalAnomalies = visibleCandidates.length;
   const avgDepth = totalAnomalies > 0 
     ? visibleCandidates.reduce((acc, curr) => acc + curr.dimensions.depth_approx, 0) / totalAnomalies 
@@ -756,6 +1155,24 @@ export default function DemGridDisplay({
   };
 
   const handleCellClick = (x: number, y: number) => {
+    if (isDropPinMode) {
+      const pixelLatDegree = radius / 7.5;
+      const pixelLonDegree = radius / 7.5;
+      const clickLat = point.lat + (7.5 - y) * pixelLatDegree;
+      const clickLon = point.lon + (x - 7.5) * pixelLonDegree;
+      
+      if (onMapClick) {
+        onMapClick(clickLat, clickLon);
+      }
+      
+      setHudLogMessage(
+        lang === 'ar'
+          ? `📍 تم إسقاط دبوس في الخلية [${x}، ${y}] بالإحداثيات المحددة!`
+          : `📍 Pin dropped at cell [${x}, ${y}]. Target analytical coordinates locked!`
+      );
+      return;
+    }
+
     const cand = getCandidateForCell(y, x);
     if (cand) {
       onSelectCandidate(cand);
@@ -1181,6 +1598,31 @@ export default function DemGridDisplay({
             {t.findNearestBtn}
           </button>
 
+          {/* Ad-hoc Drop Pin Coordinate Mode button */}
+          <button
+            type="button"
+            onClick={() => {
+              setIsDropPinMode(!isDropPinMode);
+              setHudLogMessage(
+                !isDropPinMode
+                  ? (lang === 'ar' ? 'تم تفعيل وضع إسقاط الدبوس 📍 اضغط على الخلايا لتحديد إحداثيات التحليل' : 'Drop Pin Mode activated 📍 Click any grid cell to define custom coordinates.')
+                  : (lang === 'ar' ? 'تم تعطيل وضع إسقاط الدبوس.' : 'Drop Pin Mode deactivated.')
+              );
+            }}
+            className={`px-3.5 py-2 rounded-lg text-xs font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-2 border shadow-sm transition-all cursor-pointer ${
+              isDropPinMode
+                ? 'bg-amber-500 border-amber-400 text-gray-950 focus:ring-1 focus:ring-amber-500 font-bold'
+                : isDark
+                  ? 'bg-gray-900 hover:bg-gray-800 border-gray-850 hover:border-gray-750 text-amber-400'
+                  : 'bg-amber-50 hover:bg-amber-100 border-amber-100 text-amber-700'
+            }`}
+            id="btn-drop-pin-mode"
+            title="Toggle drop pin mode to establish custom coordinates over any cell"
+          >
+            <Crosshair className={`w-4 h-4 ${isDropPinMode ? 'animate-spin text-gray-950' : 'text-amber-500'}`} />
+            <span>{isDropPinMode ? (lang === 'ar' ? 'وضع الدبوس نشط' : 'PIN ACTIVE') : (lang === 'ar' ? 'إسقاط دبوس' : 'DROP PIN')}</span>
+          </button>
+
           {/* Current selected candidate coordinates and distance display */}
           <div className="flex flex-col justify-center">
             {selectedCandidate ? (
@@ -1314,6 +1756,21 @@ export default function DemGridDisplay({
 
           <button
             type="button"
+            onClick={handleExportGeoJson}
+            className={`px-3 py-2 rounded-lg text-[11px] font-mono font-bold tracking-wide flex items-center justify-center gap-1.5 border shadow-sm transition-all cursor-pointer ${
+              isDark
+                ? 'bg-gray-900 hover:bg-gray-800 border-gray-850 hover:border-gray-750 text-gray-300 hover:text-amber-400'
+                : 'bg-white hover:bg-slate-50 border-slate-250 text-slate-700 hover:text-amber-600'
+            }`}
+            title={lang === 'ar' ? 'تصدير كمخطط خارطة الجغرافي GeoJSON' : 'Export current scan view in standard GeoJSON format'}
+            id="btn-export-geojson"
+          >
+            <MapPin className="w-3.5 h-3.5 text-amber-500" />
+            <span>GEOJSON</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setIsDossierOpen(true)}
             className={`px-3 py-2 rounded-lg text-[11px] font-mono font-bold tracking-wide flex items-center justify-center gap-1.5 border shadow-sm transition-all cursor-pointer ${
               isDark
@@ -1352,6 +1809,59 @@ export default function DemGridDisplay({
             <Layers className="w-3.5 h-3.5 animate-pulse" />
             <span>{showNasaSpecs ? (lang === 'ar' ? 'إغلاق المواصفات' : 'CLOSE SPECS') : (lang === 'ar' ? 'مواصفات ناسا الخرائطية' : 'NASA COG SPECS')}</span>
           </button>
+
+          {/* Quick Layer Switcher (ALOS PALSAR <-> CORONA) */}
+          <button
+            type="button"
+            onClick={handleTogglePalsarCorona}
+            className={`absolute top-14 ${lang === 'ar' ? 'right-3' : 'left-3'} z-30 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-mono font-bold uppercase border shadow-md transition-all cursor-pointer ${
+              viewMode === 'corona'
+                ? 'bg-amber-500/15 text-amber-500 border-amber-500/30 hover:bg-amber-500/25'
+                : isDark
+                  ? 'bg-gray-900 border-gray-850 hover:bg-gray-800 text-emerald-400 hover:text-emerald-300'
+                  : 'bg-emerald-50 border-emerald-150 hover:bg-emerald-100 text-emerald-700 hover:text-emerald-800'
+            }`}
+            id="btn-palsar-corona-toggle"
+            title={lang === 'ar' ? 'تبديل طبقة الرادار / تضاريس PALSAR التاريخية' : 'Toggle ALOS PALSAR Topography / Historical CORONA Film'}
+          >
+            <Split className="w-3.5 h-3.5 text-amber-500" />
+            <span>
+              {viewMode === 'corona'
+                ? (lang === 'ar' ? 'عرض PALSAR' : 'VIEW PALSAR')
+                : (lang === 'ar' ? 'عرض كورونا' : 'VIEW CORONA')}
+            </span>
+          </button>
+
+          {/* Cardinal Direction Compass Widget */}
+          <div 
+            className={`absolute top-3 ${lang === 'ar' ? 'left-3' : 'right-3'} z-30 flex flex-col items-center gap-1 p-1.5 rounded-xl border bg-opacity-90 dark:bg-opacity-95 shadow-md backdrop-blur-sm transition-all ${
+              isDark ? 'bg-zinc-950 border-zinc-800 text-gray-200' : 'bg-white border-slate-250 text-slate-800'
+            }`}
+            style={{ width: '68px' }}
+            id="cardinal-compass-widget"
+          >
+            {/* Compass Dial */}
+            <div className="relative w-10 h-10 rounded-full border border-dashed flex items-center justify-center border-gray-400 dark:border-zinc-700">
+              {/* Spinning Needle */}
+              <div className="absolute inset-0 flex items-center justify-center transition-transform duration-300">
+                {/* Red North arrow */}
+                <div className="absolute top-0.5 w-0 h-0 border-l-[3px] border-r-[3px] border-b-[12px] border-l-transparent border-r-transparent border-b-rose-500" />
+                {/* Blue South arrow */}
+                <div className="absolute bottom-0.5 w-0 h-0 border-l-[3px] border-r-[3px] border-t-[12px] border-l-transparent border-r-transparent border-t-sky-500" />
+                {/* Pivot Center Point */}
+                <div className="w-1.5 h-1.5 rounded-full bg-zinc-900 dark:bg-zinc-100 border border-white z-10" />
+              </div>
+
+              {/* Cardinal Label markers */}
+              <span className="absolute top-0 text-[7px] font-extrabold text-rose-500 select-none">N</span>
+              <span className="absolute bottom-0 text-[7px] font-bold text-gray-500 dark:text-zinc-400 select-none">S</span>
+              <span className="absolute right-0.5 text-[7px] font-bold text-gray-500 dark:text-zinc-400 select-none">E</span>
+              <span className="absolute left-0.5 text-[7px] font-bold text-gray-500 dark:text-zinc-400 select-none">W</span>
+            </div>
+            <span className="text-[7px] font-mono tracking-wider text-center font-bold text-zinc-400 select-none">
+              {lang === 'ar' ? 'شمال-0°' : 'N-0°'}
+            </span>
+          </div>
 
           {showNasaSpecs && (
             <div className={`absolute inset-0 z-40 p-4 rounded-xl flex flex-col gap-3 select-text backdrop-blur-md animate-fadeIn ${
@@ -1539,6 +2049,14 @@ export default function DemGridDisplay({
             </div>
           )}
 
+          {/* Active Banner for Drop-Pin Mode */}
+          {isDropPinMode && (
+            <div className="absolute top-26 left-1/2 transform -translate-x-1/2 z-30 bg-amber-500 text-gray-950 border border-amber-400 text-[10px] font-mono font-bold uppercase tracking-wider px-3 py-1 rounded-full shadow-lg flex items-center gap-1.5 animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-gray-950 animate-ping" />
+              <span>{lang === 'ar' ? 'وضع إسقاط الدبوس نشط 📍 انقر لتعيين الإحداثيات' : 'DROP PIN MODE ACTIVE 📍 CLICK TO SET CODS'}</span>
+            </div>
+          )}
+
           {viewMode === 'exploration' ? (
             <div className="w-full h-full flex-1 rounded-lg overflow-y-auto border border-gray-800/10 dark:border-gray-850 relative p-0 pointer-events-auto">
               <ExplorationScenarioDisplay
@@ -1653,7 +2171,7 @@ export default function DemGridDisplay({
                               }`}
                               id={`cell-left-${y}-${x}`}
                             >
-                              {cand && (
+                              {cand ? (
                                 <div className={`w-3 h-3 rounded-full flex items-center justify-center text-[8px] font-mono font-bold shadow-md cursor-pointer animate-pulse ${
                                   isSelectedCand 
                                     ? 'bg-rose-500 text-white' 
@@ -1661,7 +2179,9 @@ export default function DemGridDisplay({
                                 }`}>
                                   {cand.id}
                                 </div>
-                              )}
+                              ) : customPointCell && customPointCell.x === x && customPointCell.y === y ? (
+                                <div className="text-[10px] animate-bounce pointer-events-none" title="Dropped Pin coordinate analysis">📍</div>
+                              ) : null}
                             </button>
                           );
                         })}
@@ -1720,7 +2240,7 @@ export default function DemGridDisplay({
                               }`}
                               id={`cell-right-${y}-${x}`}
                             >
-                              {cand && (
+                              {cand ? (
                                 <div className={`w-3 h-3 rounded-full flex items-center justify-center text-[8px] font-mono font-bold shadow-md cursor-pointer animate-pulse ${
                                   isSelectedCand 
                                     ? 'bg-rose-500 text-white' 
@@ -1728,7 +2248,9 @@ export default function DemGridDisplay({
                                 }`}>
                                   {cand.id}
                                 </div>
-                              )}
+                              ) : customPointCell && customPointCell.x === x && customPointCell.y === y ? (
+                                <div className="text-[10px] animate-bounce pointer-events-none" title="Dropped Pin coordinate analysis">📍</div>
+                              ) : null}
                             </button>
                           );
                         })}
@@ -1834,6 +2356,10 @@ export default function DemGridDisplay({
                                   : 'bg-emerald-400 text-gray-950 group-hover:bg-rose-500 group-hover:text-white group-hover:scale-110'
                               }`} title={`Sensing Target Anomaly: ${cand.type}`}>
                                 {cand.id}
+                              </div>
+                            ) : customPointCell && customPointCell.x === x && customPointCell.y === y ? (
+                              <div className="w-5 h-5 flex items-center justify-center text-xs animate-bounce pointer-events-none" title="Dropped Pin coordinate analysis">
+                                📍
                               </div>
                             ) : (
                               // Tiny dot for center grid coordinate
@@ -2565,7 +3091,7 @@ export default function DemGridDisplay({
       {/* Printable Report / Declassified Site Survey Dossier Modal */}
       {isDossierOpen && (
         <div 
-          className="fixed inset-0 bg-black/95 backdrop-blur-md z-[9999] flex items-center justify-center p-4 md:p-8 overflow-y-auto no-print animate-fadeIn" 
+          className="fixed inset-0 bg-black/95 backdrop-blur-md z-[9999] flex items-center justify-center p-4 md:p-8 overflow-y-auto animate-fadeIn" 
           id="print-report-dossier-modal-backdrop"
         >
           {/* Inject Dynamic Printing styles custom encapsulating printable layout */}
@@ -2573,28 +3099,41 @@ export default function DemGridDisplay({
             @media print {
               body, html {
                 background: white !important;
-                color: black !important;
+                color: #0f172a !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 -webkit-print-color-adjust: exact !important;
                 print-color-adjust: exact !important;
               }
-              .no-print {
-                display: none !important;
+              /* Hide all components by default using visibility */
+              body * {
+                visibility: hidden;
+              }
+              /* Reveal only our printing modal and its descendants */
+              #print-report-dossier-modal-backdrop,
+              #print-report-dossier-modal-backdrop * {
+                visibility: visible;
               }
               #print-report-dossier-modal-backdrop {
-                background: transparent !important;
+                background: white !important;
                 backdrop-filter: none !important;
                 padding: 0 !important;
-                position: static !important;
+                position: absolute !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                height: auto !important;
                 overflow: visible !important;
                 display: block !important;
+                z-index: 99999 !important;
               }
               #print-report-dossier-modal-wrapper {
                 padding: 0 !important;
                 margin: 0 !important;
                 background: white !important;
                 display: block !important;
+                width: 100% !important;
+                max-width: 100% !important;
               }
               #print-report-dossier-modal-container {
                 position: static !important;
@@ -2605,11 +3144,15 @@ export default function DemGridDisplay({
                 padding: 0 !important;
                 margin: 0 !important;
                 background: white !important;
-                color: black !important;
+                color: #0f172a !important;
                 display: block !important;
               }
+              .no-print, .no-print * {
+                display: none !important;
+                visibility: hidden !important;
+              }
               .print-border {
-                border-color: #111111 !important;
+                border-color: #cbd5e1 !important;
               }
               .print-bg-slate {
                 background-color: #f8fafc !important;
@@ -2763,13 +3306,40 @@ export default function DemGridDisplay({
                   </button>
                   <button
                     type="button"
-                    onClick={() => window.print()}
+                    onClick={() => {
+                      try {
+                        window.print();
+                      } catch (e) {
+                        console.error(e);
+                        alert(lang === 'ar'
+                          ? 'تنبيه: الطباعة المباشرة معطلة في معاينة الإطار. يرجى فتح التطبيق في علامة تبويب جديدة مستقلة للطباعة بنجاح.'
+                          : 'Direct printing is restricted inside the sandboxed preview. Please open the application in an external browser tab to print successfully.');
+                      }
+                    }}
                     className="flex-1 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] uppercase shadow-md flex items-center justify-center gap-1 transition-all cursor-pointer"
                   >
                     <Printer className="w-3.5 h-3.5" />
                     <span>{lang === 'ar' ? 'طباعة التقرير' : 'Print / Save PDF'}</span>
                   </button>
                 </div>
+
+                {typeof window !== 'undefined' && window.self !== window.top && (
+                  <div className="text-[10px] bg-amber-500/15 border border-amber-500/25 text-amber-400 p-2 rounded leading-normal font-sans">
+                    ⚠️ {lang === 'ar' 
+                      ? 'التطبيق يعرض داخل إطار معاينة مدمج. لضمان فتح نافذة الطباعة بشكل صحيح، يرجى فتح التطبيق في نافذة مستقلة جديدة ثم طباعته.'
+                      : 'Running inside sandboxed preview frame. For perfect PDF generation, please open this app in a separate browser tab, then trigger print.'}
+                  </div>
+                )}
+                
+                <button
+                  type="button"
+                  onClick={handleExportDoc}
+                  className="w-full py-2.5 rounded bg-blue-500 hover:bg-blue-400 text-white font-extrabold text-[10px] uppercase shadow-lg shadow-blue-500/10 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{lang === 'ar' ? 'تصدير التقرير لمستند وورد (Word)' : 'Export Dossier to Word (.DOC)'}</span>
+                </button>
+                
                 <button
                   type="button"
                   onClick={handleExportTxt}
@@ -2795,50 +3365,78 @@ export default function DemGridDisplay({
               </div>
 
               {/* Document Header */}
-              <div className="border-b-2 border-double print-border border-gray-800/20 dark:border-gray-800/60 pb-5">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <Compass className="w-5 h-5 text-emerald-500 animate-spin-slow" />
-                  <span className="text-xs md:text-sm font-mono font-extrabold text-emerald-500 uppercase tracking-widest">
+              <div className="border-b-2 border-double print-border border-gray-800/10 dark:border-gray-850/50 pb-6 relative">
+                <div className="flex items-center gap-2.5 mb-2.5">
+                  <Compass className="w-5.5 h-5.5 text-teal-500 animate-spin-slow animate-pulse" />
+                  <span className="text-xs font-mono font-extrabold text-teal-600 dark:text-teal-400 uppercase tracking-widest">
                     {agencyName || (lang === 'ar' ? 'هيئة استطلاع الفضاء الدولية الموحدة' : 'UNITED SPACE RECONNAISSANCE OFFICE')}
                   </span>
                 </div>
-                <h1 className="text-xl md:text-3xl font-mono tracking-tight font-black uppercase">
+                <h1 className="text-2xl md:text-3.5xl font-mono tracking-tight font-black uppercase text-slate-900 dark:text-white leading-tight">
                   {lang === 'ar' ? 'ملف المسح الجيو-أثري وتحليل الصخر الأساسي المتكامل' : 'GEO-ARCHAEOLOGICAL SUBSURFACE RADAR SURVEY DOSSIER'}
                 </h1>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs font-mono mt-2 text-gray-500 dark:text-gray-400">
-                  <span>REF: KH4B-ALOS-PALSAR-SY-{point.lat.toFixed(2)}-{point.lon.toFixed(2)}</span>
-                  <span>•</span>
-                  <span>SYSTEM DATE: {new Date().toLocaleDateString(lang === 'ar' ? 'ar-SY' : 'en-US')}</span>
-                  <span>•</span>
-                  <span>SECURITY: UNCLASSIFIED ACADEMIC RECORD</span>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mt-4 text-[11px] font-mono border-t border-slate-100 sm:border-none pt-3 sm:pt-0">
+                  <div className="flex items-center gap-1.5 text-slate-500 dark:text-gray-400">
+                    <span className="text-zinc-400">REF:</span>
+                    <span className="font-bold text-slate-700 dark:text-slate-300">KH4B-ALOS-PALSAR-SY-{point.lat.toFixed(2)}-{point.lon.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-slate-500 dark:text-gray-400">
+                    <span className="text-zinc-400">DATE:</span>
+                    <span className="font-bold text-slate-700 dark:text-slate-300">{new Date().toLocaleDateString(lang === 'ar' ? 'ar-SY' : 'en-US')}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-slate-500 dark:text-gray-400">
+                    <span className="text-zinc-400">CLEARANCE:</span>
+                    <span className="font-bold text-emerald-600 dark:text-emerald-400">A5-ACADEMIC RECORD</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Geological/Local stats grid with dynamic calculations */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="border print-border rounded-lg p-3 bg-slate-50/50 dark:bg-gray-950/50">
-                  <span className="text-[10px] md:text-xs font-mono text-gray-500 uppercase block">{lang === 'ar' ? 'منطقة القطاع والمسح' : 'Sector Region name'}</span>
-                  <span className="text-xs md:text-sm font-bold uppercase">{results.region_name}</span>
+              {/* Geological/Local stats grid - Bento style representation */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="border border-slate-200/80 dark:border-gray-800 print-border rounded-xl p-4 bg-gradient-to-br from-slate-50/70 to-slate-100/40 dark:from-gray-950/40 dark:to-gray-900/40 shadow-sm transition-all hover:shadow-md">
+                  <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest block mb-1">
+                    {lang === 'ar' ? 'منطقة القطاع والمسح' : 'Sector Region Name'}
+                  </span>
+                  <span className="text-xs md:text-sm font-black text-slate-800 dark:text-white uppercase tracking-tight block truncate">
+                    {results.region_name}
+                  </span>
                 </div>
-                <div className="border print-border rounded-lg p-3 bg-slate-50/50 dark:bg-gray-950/50">
-                  <span className="text-[10px] md:text-xs font-mono text-gray-500 uppercase block">{lang === 'ar' ? 'الإحداثيات المركزية للبؤرة' : 'Reference GPS Pivot'}</span>
-                  <span className="text-xs md:text-sm font-mono font-semibold">{point.lat.toFixed(5)}°N, {point.lon.toFixed(5)}°E</span>
+                
+                <div className="border border-slate-200/80 dark:border-gray-800 print-border rounded-xl p-4 bg-gradient-to-br from-slate-50/70 to-slate-100/40 dark:from-gray-950/40 dark:to-gray-900/40 shadow-sm transition-all hover:shadow-md">
+                  <span className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest block mb-1">
+                    {lang === 'ar' ? 'الإحداثيات المركزية للبؤرة' : 'Reference GPS Pivot'}
+                  </span>
+                  <span className="text-xs md:text-sm font-mono font-bold text-slate-700 dark:text-slate-200 block truncate">
+                    {point.lat.toFixed(5)}°N, {point.lon.toFixed(5)}°E
+                  </span>
                 </div>
-                <div className="border print-border rounded-lg p-3 bg-slate-50/50 dark:bg-gray-950/50">
-                  <span className="text-[10px] md:text-xs font-mono text-gray-500 uppercase block">{lang === 'ar' ? 'مجموع الشذوذات المكتشفة' : 'Mapped Anomalies'}</span>
-                  <span className="text-xs md:text-sm font-mono font-bold text-emerald-500">{totalAnomalies} / {candidates.length} {lang === 'ar' ? 'أهداف' : 'Targets'}</span>
+
+                <div className="border border-slate-200/80 dark:border-gray-800 print-border rounded-xl p-4 bg-gradient-to-br from-emerald-500/5 to-teal-500/5 dark:from-emerald-950/10 dark:to-teal-950/10 shadow-sm border-l-3 border-l-emerald-500">
+                  <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 uppercase tracking-widest block mb-1">
+                    {lang === 'ar' ? 'مجموع الشذوذات المكتشفة' : 'Mapped Anomalies'}
+                  </span>
+                  <span className="text-xs md:text-sm font-mono font-black text-emerald-600 dark:text-emerald-400 block pb-0.5">
+                    {totalAnomalies} / {candidates.length} {lang === 'ar' ? 'أهداف ممسوحة' : 'Targets'}
+                  </span>
                 </div>
-                <div className="border print-border rounded-lg p-3 bg-slate-50/50 dark:bg-gray-950/50">
-                  <span className="text-[10px] md:text-xs font-mono text-gray-500 uppercase block">{lang === 'ar' ? 'متوسط عمق التجويف والبالوعة' : 'Est. Mean Depth'}</span>
-                  <span className="text-xs md:text-sm font-mono font-bold text-indigo-500 dark:text-indigo-400">{avgDepth.toFixed(1)}m</span>
+
+                <div className="border border-slate-200/80 dark:border-gray-800 print-border rounded-xl p-4 bg-gradient-to-br from-indigo-500/5 to-blue-500/5 dark:from-indigo-950/10 dark:to-blue-950/10 shadow-sm border-l-3 border-l-indigo-500">
+                  <span className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 uppercase tracking-widest block mb-1">
+                    {lang === 'ar' ? 'متوسط عمق التجويف والبالوعة' : 'Est. Mean Depth'}
+                  </span>
+                  <span className="text-xs md:text-sm font-mono font-black text-indigo-600 dark:text-indigo-400 block">
+                    {avgDepth.toFixed(1)} meters
+                  </span>
                 </div>
               </div>
 
               {/* Section I: Geological Narrative Summary */}
               {includeNarrative && (
-                <div className="border print-border rounded-xl p-4 md:p-5 bg-slate-100/50 dark:bg-gray-950/40 border-l-4 border-l-indigo-500" style={{ pageBreakInside: 'avoid' }}>
-                  <h3 className="text-xs md:text-sm uppercase font-mono tracking-wider font-extrabold mb-2 text-emerald-500">
-                    I. {lang === 'ar' ? 'السياق والتحليل الجيولوجي الأساسي للقطاع' : 'GEOLOGICAL CONTEXT & SUBSURFACE LITHOLOGY'}
+                <div className="border border-slate-100 dark:border-gray-850 print-border rounded-2xl p-5 md:p-6 bg-slate-50/20 dark:bg-gray-950/10 shadow-xs" style={{ pageBreakInside: 'avoid' }}>
+                  <h3 className="text-[11px] font-mono font-black tracking-widest text-[#0d9488] border-b border-zinc-150 dark:border-zinc-800 pb-2 mb-3.5 uppercase flex items-center gap-2">
+                    <span className="bg-[#0d9488] text-white text-[9px] px-1.5 py-0.5 rounded font-bold font-mono">I</span>
+                    <span>{lang === 'ar' ? 'السياق والتحليل الجيولوجي الأساسي للقطاع' : 'GEOLOGICAL CONTEXT & SUBSURFACE LITHOLOGY'}</span>
                   </h3>
                   <p className="text-xs md:text-sm leading-relaxed whitespace-pre-line text-justify text-gray-700 dark:text-gray-300">
                     {results.geological_context}
@@ -2920,14 +3518,142 @@ export default function DemGridDisplay({
                       <span className="italic block mt-1 text-gray-700 dark:text-gray-300">"{selectedCandidate.geology_notes}"</span>
                     </div>
                   </div>
+
+                  {activeReport && (
+                    <div className="mt-4 pt-4 border-t border-slate-200 dark:border-gray-850/60 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="text-xs leading-relaxed font-sans col-span-1 md:col-span-2 bg-indigo-500/5 dark:bg-indigo-500/10 p-3 rounded-lg border border-indigo-500/10 dark:border-indigo-500/10">
+                        <span className="font-mono font-bold text-indigo-500 uppercase text-[10px] block mb-1">
+                          {lang === 'ar' ? 'ملخص تحليلي تنفيذي (AI EXECUTIVE SYNTHESIS)' : 'AI EXECUTIVE SYNTHESIS SUMMARY'}
+                        </span>
+                        <p className="font-semibold text-gray-800 dark:text-gray-250">
+                          {lang === 'ar' ? (activeReport.summary_ar || activeReport.summary) : activeReport.summary}
+                        </p>
+                      </div>
+
+                      <div className="text-xs leading-relaxed font-sans p-3 rounded-lg border border-slate-100 dark:border-gray-800">
+                        <span className="font-mono font-bold text-rose-500 uppercase text-[10px] block mb-1">
+                          {lang === 'ar' ? 'التفسير الجيولوجي والظواهر الكارستية' : 'GEOLOGICAL PROBABILITY & KARST MECHANISMS'}
+                        </span>
+                        <p className="text-slate-700 dark:text-gray-300 font-medium">
+                          {lang === 'ar' ? (activeReport.geological_probability_ar || activeReport.geological_probability) : activeReport.geological_probability}
+                        </p>
+                      </div>
+
+                      <div className="text-xs leading-relaxed font-sans p-3 rounded-lg border border-slate-100 dark:border-gray-800">
+                        <span className="font-mono font-bold text-amber-500 uppercase text-[10px] block mb-1">
+                          {lang === 'ar' ? 'الأهمية الأثرية والقرائن التاريخية' : 'ARCHAEOLOGICAL RELEVANCE & PROTO-HISTORIC CONTEXT'}
+                        </span>
+                        <p className="text-slate-700 dark:text-gray-300 font-medium">
+                          {lang === 'ar' ? (activeReport.archaeological_relevance_ar || activeReport.archaeological_relevance) : activeReport.archaeological_relevance}
+                        </p>
+                      </div>
+
+                      <div className="text-xs leading-relaxed font-sans p-3 rounded-lg border border-slate-100 dark:border-gray-800">
+                        <span className="font-mono font-bold text-blue-500 uppercase text-[10px] block mb-1">
+                          {lang === 'ar' ? 'المواءمة التصويرية لكورونا (١٩٦٠-١٩٧٠)' : 'HISTORIC SPY-SATELLITE CORONA PHOTOGRAMMETRY'}
+                        </span>
+                        <p className="text-slate-700 dark:text-gray-300 font-medium">
+                          {lang === 'ar' ? (activeReport.corona_imagery_analysis_ar || activeReport.corona_imagery_analysis) : activeReport.corona_imagery_analysis}
+                        </p>
+                      </div>
+
+                      <div className="text-xs leading-relaxed font-sans p-3 rounded-lg border border-slate-100 dark:border-gray-800">
+                        <span className="font-mono font-bold text-emerald-500 uppercase text-[10px] block mb-1">
+                          {lang === 'ar' ? 'التوصيات الميدانية والمسح الجيوراداري (GPR)' : 'RECOMMENDED FIELD GEOPHYSICAL DIRECTIVES'}
+                        </span>
+                        <p className="text-slate-700 dark:text-gray-300 font-medium">
+                          {lang === 'ar' ? (activeReport.field_recommendations_ar || activeReport.field_recommendations) : activeReport.field_recommendations}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Section IV: Custom field surveyor observations Addendum */}
+              {/* Section IV: Custom Pin Point Coordinate Analysis */}
+              {customReport && (
+                <div className="border print-border rounded-xl p-4 md:p-5 bg-gradient-to-r from-teal-500/5 to-emerald-500/5 dark:from-teal-980/10 dark:to-emerald-980/10 border-l-4 border-l-teal-500 shadow-sm" style={{ pageBreakInside: 'avoid' }}>
+                  <div className="flex items-center justify-between gap-4 border-b dark:border-gray-800 pb-2.5 mb-2.5">
+                    <h4 className="text-xs md:text-sm uppercase font-mono tracking-wider font-extrabold text-teal-600 dark:text-teal-400">
+                      IV. {lang === 'ar' ? 'التحليل الجيوفيزيائي والأثري الإضافي (الدبوس المسقط)' : 'CUSTOM DROP PIN COORDINATE SCAN REPORT'}
+                    </h4>
+                    <span className="text-[10px] md:text-xs font-mono font-bold px-2 py-0.5 rounded bg-teal-500/20 text-teal-600 dark:text-teal-400 uppercase">
+                      GPS COORDS: {customReport.point.lat.toFixed(6)}°N, {customReport.point.lon.toFixed(6)}°E
+                    </span>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div className="border border-slate-200/60 dark:border-gray-800 p-2.5 rounded-lg bg-white/50 dark:bg-gray-950/40 text-xs">
+                      <span className="text-gray-500 uppercase text-[9px] font-mono block mb-0.5">{lang === 'ar' ? 'وجود آثار كربونية / دفائن' : 'Artifact Probability'}</span>
+                      <span className={`font-bold ${customReport.has_artifacts ? 'text-emerald-500' : 'text-gray-400'}`}>
+                        {customReport.has_artifacts ? (lang === 'ar' ? `مؤكد (${customReport.probability}%)` : `CONFIRMED (${customReport.probability}%)`) : (lang === 'ar' ? 'غير مرجح' : 'UNLIKELY')}
+                      </span>
+                    </div>
+
+                    <div className="border border-slate-200/60 dark:border-gray-800 p-2.5 rounded-lg bg-white/50 dark:bg-gray-950/40 text-xs">
+                      <span className="text-gray-500 uppercase text-[9px] font-mono block mb-0.5">{lang === 'ar' ? 'تصنيف الدفينة' : 'Artifact Classification'}</span>
+                      <span className="font-bold text-gray-800 dark:text-gray-250">{lang === 'ar' ? (customReport.artifact_type_ar || customReport.artifact_type) : customReport.artifact_type}</span>
+                    </div>
+
+                    <div className="border border-slate-200/60 dark:border-gray-800 p-2.5 rounded-lg bg-white/50 dark:bg-gray-950/40 text-xs">
+                      <span className="text-gray-500 uppercase text-[9px] font-mono block mb-0.5">{lang === 'ar' ? 'العمق الجوفي المقدر' : 'Buried Target Depth'}</span>
+                      <span className="font-bold text-teal-600 dark:text-teal-450">{customReport.depth_meters.toFixed(1)} meters</span>
+                    </div>
+
+                    <div className="border border-slate-200/60 dark:border-gray-800 p-2.5 rounded-lg bg-white/50 dark:bg-gray-950/40 text-xs">
+                      <span className="text-gray-500 uppercase text-[9px] font-mono block mb-0.5">{lang === 'ar' ? 'الحقبة والطبقة الجيولوجية' : 'Stratigraphy Epoch'}</span>
+                      <span className="font-bold text-gray-800 dark:text-gray-250">{lang === 'ar' ? (customReport.estimated_age_ar || customReport.estimated_age) : customReport.estimated_age}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-sans">
+                    <div className="p-3 rounded-lg border border-teal-500/10 bg-white/25 dark:bg-gray-950/25">
+                      <span className="font-mono font-bold text-teal-500 uppercase text-[9px] block mb-1">
+                        {lang === 'ar' ? 'الطبقة الرسوبية والجيو-تراكمية' : 'GEOLOGICAL SEDIMENTARY LAYER'}
+                      </span>
+                      <p className="text-slate-700 dark:text-gray-300 leading-relaxed">
+                        {lang === 'ar' ? (customReport.geological_layer_ar || customReport.geological_layer) : customReport.geological_layer}
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-lg border border-teal-500/10 bg-white/25 dark:bg-gray-950/25">
+                      <span className="font-mono font-bold text-teal-500 uppercase text-[9px] block mb-1">
+                        {lang === 'ar' ? 'الهياكل تحت السطحية المكتشفة بالرادار' : 'RADAR SIGNATURE SUBSURFACE STRUCTURES'}
+                      </span>
+                      <p className="text-slate-700 dark:text-gray-300 leading-relaxed">
+                        {lang === 'ar' ? (customReport.dossier_report.subsurface_structure_ar || customReport.dossier_report.subsurface_structure) : customReport.dossier_report.subsurface_structure}
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-lg border border-teal-500/10 bg-white/25 dark:bg-gray-950/25 md:col-span-2">
+                      <span className="font-mono font-bold text-teal-500 uppercase text-[9px] block mb-1">
+                        {lang === 'ar' ? 'الوصف الأثري والتاريخي التفصيلي للموقع' : 'ARCHAEOLOGICAL HISTORICAL COMMENTARY & ARTIFACT DESCRIPTION'}
+                      </span>
+                      <p className="text-slate-700 dark:text-gray-300 mb-2 font-medium leading-relaxed">
+                        {lang === 'ar' ? (customReport.dossier_report.artifact_description_ar || customReport.dossier_report.artifact_description) : customReport.dossier_report.artifact_description}
+                      </p>
+                      <p className="text-slate-600 dark:text-gray-400 italic leading-relaxed">
+                        {lang === 'ar' ? (customReport.dossier_report.historical_commentary_ar || customReport.dossier_report.historical_commentary) : customReport.dossier_report.historical_commentary}
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-lg border border-teal-500/10 bg-teal-500/5 dark:bg-teal-950/10 md:col-span-2">
+                      <span className="font-mono font-bold text-teal-600 dark:text-teal-400 uppercase text-[9px] block mb-1">
+                        {lang === 'ar' ? 'الخطوات والتوصيات والعمليات الميدانية المقترحة' : 'IMMEDIATE EXPEDITION & FIELD RECOMMENDATIONS'}
+                      </span>
+                      <p className="text-slate-700 dark:text-gray-200 font-semibold leading-relaxed">
+                        {lang === 'ar' ? (customReport.dossier_report.field_actions_ar || customReport.dossier_report.field_actions) : customReport.dossier_report.field_actions}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Section V: Custom field surveyor observations Addendum */}
               {customNotes && (
                 <div className="border print-border rounded-xl p-4 md:p-5 bg-slate-50 dark:bg-gray-950/30 border-l-4 border-l-amber-500 shadow-sm" style={{ pageBreakInside: 'avoid' }}>
                   <h4 className="text-xs md:text-sm uppercase font-mono tracking-wider font-extrabold text-amber-500 border-b dark:border-gray-800 pb-2.5 mb-2.5">
-                    IV. {lang === 'ar' ? 'ملحق التعليقات والملاحظات الميدانية الإضافية' : 'IV. ADDENDUM: SURVEYOR FIELD COMMENTS'}
+                    V. {lang === 'ar' ? 'ملحق التعليقات والملاحظات الميدانية الإضافية' : 'V. ADDENDUM: SURVEYOR FIELD COMMENTS'}
                   </h4>
                   <p className="text-xs md:text-sm leading-relaxed whitespace-pre-line text-gray-700 dark:text-gray-300 font-sans">
                     {customNotes}
